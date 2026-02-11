@@ -1,7 +1,5 @@
 import { routeAgentRequest, type Schedule } from "agents";
 
-import { getSchedulePrompt } from "agents/schedule";
-
 import { AIChatAgent } from "@cloudflare/ai-chat";
 import {
   generateId,
@@ -65,12 +63,7 @@ export class Chat extends AIChatAgent<Env> {
         });
 
         const result = streamText({
-          system: `You are a helpful assistant that can do various tasks... 
-
-${getSchedulePrompt({ date: new Date() })}
-
-If the user asks to schedule a task, use the schedule tool to schedule the task.
-`,
+          system: `You are a helpful assistant that can do various tasks. When the user provides or refers to todo tasks, always include a machine-readable JSON representation in your reply wrapped in a triple-backtick json code block so the frontend can parse it. The JSON must be an array of objects with these fields: title (string), due (ISO date string, optional), priority ("low"|"medium"|"high", optional), estimatedMinutes (number, optional), done (boolean). Example:\n\n\treply example:\n\n\tI can help — here's a summary:\n\t- ...human friendly text...\n\n\t\`\`\`json\n\t[\n\t  { "title": "Write report", "due": "2026-02-12", "priority": "high", "estimatedMinutes": 120, "done": false },\n\t  { "title": "Buy groceries", "due": "2026-02-13", "priority": "medium", "estimatedMinutes": 30, "done": false }\n\t]\n\t\`\`\`\n\nIf there are no tasks to extract, do not emit an empty JSON array. Keep the human-friendly text, but only include JSON when tasks are present. Make the JSON valid and parsable.`,
 
           messages: await convertToModelMessages(processedMessages),
           model,
