@@ -115,7 +115,47 @@ export default function Chat() {
       return;
     }
 
-    // Send message to agent
+    // If local parsing didn't find anything, try the server-side parser which uses the model
+    try {
+      const res = await fetch("/parse-todos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: message })
+      });
+
+      if (res.ok) {
+        const data = (await res.json().catch(() => ({ todos: null }))) as { todos?: any[] | null };
+        if (data && Array.isArray(data.todos) && data.todos.length > 0) {
+          // ensure each todo has an id for UI operations
+          const normalized: Todo[] = data.todos.map((t: any, i: number) => ({
+            id: t.id ?? `todo-${Date.now()}-${i}`,
+            title: String(t.title ?? "Untitled"),
+            due: t.due ?? undefined,
+            priority: (t.priority as Todo["priority"]) ?? undefined,
+            estimatedMinutes: typeof t.estimatedMinutes === "number" ? t.estimatedMinutes : undefined,
+            done: typeof t.done === "boolean" ? t.done : false
+          }));
+
+          setTodos(normalized);
+
+          // Send a compact markdown representation to the agent so the conversation stays in sync
+          const md = todosToMarkdownTable(normalized);
+          await sendMessage(
+            {
+              role: "user",
+              parts: [{ type: "text", text: `Added todos:\n\n${md}` }]
+            },
+            { body: extraData }
+          );
+          return;
+        }
+      }
+    } catch (err) {
+      // swallow parse errors and continue to send message to agent
+      console.warn("/parse-todos failed", err);
+    }
+
+    // Send message to agent as a fallback/default path
     await sendMessage(
       {
         role: "user",

@@ -9,11 +9,13 @@ import {
   createUIMessageStream,
   convertToModelMessages,
   createUIMessageStreamResponse,
-  type ToolSet
+  type ToolSet,
+  generateObject
 } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { processToolCalls, cleanupMessages } from "./utils";
 import { tools, executions } from "./tools";
+import { z } from "zod";
 // import { env } from "cloudflare:workers";
 
 const model = openai("gpt-4o-2024-11-20");
@@ -116,6 +118,57 @@ export default {
         success: hasOpenAIKey
       });
     }
+
+    // New endpoint: POST /parse-todos
+    if (url.pathname === "/parse-todos" && request.method === "POST") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const text = (body?.text as string) || "";
+
+        if (!text.trim()) {
+          return new Response(JSON.stringify({ todos: null }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // zod schema for a todo item
+        const todoSchema = z.object({
+          title: z.string(),
+          due: z.string().optional(),
+          priority: z.enum(["low", "medium", "high"]).optional(),
+          estimatedMinutes: z.number().optional(),
+          done: z.boolean().optional()
+        });
+
+        const schema = z.object({ todos: z.array(todoSchema).optional().nullable() });
+
+        // Strict prompt guiding the model to return only a JSON object matching our schema
+        const prompt = `Extract todos from the following text. If there are todos present, return a JSON object with a single key \"todos\" whose value is an array of todo objects. Each todo object must contain: title (string), due (ISO date string, optional), priority (one of \"low\", \"medium\", \"high\"; optional), estimatedMinutes (number, optional), done (boolean, optional). If there are no todos, return { "todos": null }. Output must be valid JSON only, nothing else. Here is the input:\n\n${text}`;
+
+        const response = await generateObject({
+          model,
+          prompt,
+          schema,
+          // be conservative with tokens
+          maxOutputTokens: 1000
+        });
+
+        const todos = response.object?.todos ?? null;
+
+        return new Response(JSON.stringify({ todos }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (err) {
+        console.error("/parse-todos error", err);
+        return new Response(JSON.stringify({ error: String(err) }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       console.error(
         "OPENAI_API_KEY is not set, don't forget to set it locally in .dev.vars, and use `wrangler secret bulk .dev.vars` to upload it to production"
