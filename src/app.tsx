@@ -14,6 +14,9 @@ import { Toggle } from "@/components/toggle/Toggle";
 import { Textarea } from "@/components/textarea/Textarea";
 import { MemoizedMarkdown } from "@/components/memoized-markdown";
 import { ToolInvocationCard } from "@/components/tool-invocation-card/ToolInvocationCard";
+import TodoTable from "@/components/todo/TodoTable";
+import { parseTodosFromJSON, parseTodosFromMarkdownTable, todosToMarkdownTable } from "./lib/todoUtils";
+import type { Todo } from "./shared";
 
 // Icon imports
 import {
@@ -135,10 +138,63 @@ export default function Chat() {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  // Local todo list state for demo / UI
+  const [todos, setTodos] = useState<Todo[]>([]);
+  // When we receive assistant messages, try to parse todos out of text parts
+  useEffect(() => {
+    (async () => {
+      for (const m of agentMessages) {
+        if (m.role !== "assistant") continue;
+        for (const part of m.parts ?? []) {
+          if (part.type === "text") {
+            const text = part.text;
+            // Try JSON first
+            const fromJson = parseTodosFromJSON(text);
+            if (fromJson) {
+              setTodos(fromJson);
+              return;
+            }
+            // Try markdown table
+            const fromMd = parseTodosFromMarkdownTable(text);
+            if (fromMd) {
+              setTodos(fromMd);
+              return;
+            }
+          }
+        }
+      }
+    })();
+  }, [agentMessages]);
+
   return (
     <div className="h-screen w-full p-4 flex justify-center items-center bg-fixed overflow-hidden">
       <HasOpenAIKey />
       <div className="h-[calc(100vh-2rem)] w-full mx-auto max-w-lg flex flex-col shadow-xl rounded-md overflow-hidden relative border border-neutral-300 dark:border-neutral-800">
+        {/* Todo panel: shows parsed todos and allows local edits */}
+        <div className="px-4 py-2 border-b border-neutral-200 dark:border-neutral-800">
+          <h3 className="font-medium mb-2">Todo List (parsed from AI)</h3>
+          <TodoTable
+            todos={todos}
+            onToggleDone={(id) => {
+              setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+              // send a user message back to agent to keep conversation in sync
+              sendMessage({ role: "user", parts: [{ type: "text", text: `Toggled todo ${id}` }] });
+            }}
+            onAdd={(todo) => {
+              setTodos((prev) => [...prev, todo]);
+              // Optionally send the updated todos as markdown to the agent
+              const md = todosToMarkdownTable([...(todos ?? []), todo]);
+              sendMessage({ role: "user", parts: [{ type: "text", text: `Added todo:\n\n${md}` }] });
+            }}
+            onUpdate={(id, patch) => {
+              setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+            }}
+            onDelete={(id) => {
+              setTodos((prev) => prev.filter((t) => t.id !== id));
+            }}
+          />
+        </div>
+
         <div className="px-4 py-3 border-b border-neutral-300 dark:border-neutral-800 flex items-center gap-3 sticky top-0 z-10">
           <div className="flex items-center justify-center h-8 w-8">
             <svg
