@@ -101,7 +101,8 @@ export default function Chat() {
     const fromMd = !fromJson ? parseTodosFromMarkdownTable(message) : null;
     if (fromJson || fromMd) {
       const parsed = fromJson ?? fromMd!;
-      setTodos(parsed);
+      console.debug("setting todos from local parse", parsed);
+      setTodos(mergeIncomingTodos(parsed));
 
       // Send a compact markdown representation to the agent so the conversation stays in sync
       const md = todosToMarkdownTable(parsed);
@@ -136,19 +137,22 @@ export default function Chat() {
             done: typeof t.done === "boolean" ? t.done : false
           }));
 
-          setTodos(normalized);
+          console.debug("setting todos from server parse", normalized);
 
-          // Send a compact markdown representation to the agent so the conversation stays in sync
-          const md = todosToMarkdownTable(normalized);
-          await sendMessage(
-            {
-              role: "user",
-              parts: [{ type: "text", text: `Added todos:\n\n${md}` }]
-            },
-            { body: extraData }
-          );
-          return;
-        }
+          // Merge normalized todos into existing list to avoid overwriting previous items.
+          setTodos(mergeIncomingTodos(normalized));
+
+           // Send a compact markdown representation to the agent so the conversation stays in sync
+           const md = todosToMarkdownTable(normalized);
+           await sendMessage(
+             {
+               role: "user",
+               parts: [{ type: "text", text: `Added todos:\n\n${md}` }]
+             },
+             { body: extraData }
+           );
+           return;
+         }
       }
     } catch (err) {
       // swallow parse errors and continue to send message to agent
@@ -201,28 +205,68 @@ export default function Chat() {
 
   // Local todo list state for demo / UI
   const [todos, setTodos] = useState<Todo[]>([]);
+
+  // Helper: normalize title for matching
+  const titleKey = (s?: string) => (s ? String(s).trim().toLowerCase() : "");
+
+  // Helper: merge incoming todos into existing state, dedup by id then normalized title
+  const mergeIncomingTodos = (incoming: Todo[]) => (prev: Todo[]) => {
+    const result = [...prev];
+    const byId = new Map(prev.map((p) => [p.id, p]));
+    const byTitle = new Map(prev.map((p) => [titleKey(p.title), p]));
+
+    for (const raw of incoming) {
+      const n: Todo = {
+        id: raw.id ?? `todo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title: (raw.title ?? "Untitled").trim(),
+        due: raw.due ?? undefined,
+        priority: raw.priority ?? undefined,
+        estimatedMinutes: typeof raw.estimatedMinutes === "number" ? raw.estimatedMinutes : undefined,
+        done: typeof raw.done === "boolean" ? raw.done : false,
+        createdAt: raw.createdAt ?? new Date().toISOString()
+      };
+
+      const existingById = byId.get(n.id);
+      const existingByTitle = byTitle.get(titleKey(n.title));
+      const existing = existingById ?? existingByTitle;
+
+      if (existing) {
+        const idx = result.findIndex((r) => r.id === existing.id);
+        if (idx !== -1) result[idx] = { ...result[idx], ...n };
+      } else {
+        result.push(n);
+      }
+    }
+
+    console.debug(`mergeIncomingTodos: prev=${prev.length} incoming=${incoming.length} result=${result.length}`);
+    return result;
+  };
+
   // When we receive assistant messages, try to parse todos out of text parts
   useEffect(() => {
     (async () => {
+      const collected: Todo[] = [];
       for (const m of agentMessages) {
         if (m.role !== "assistant") continue;
         for (const part of m.parts ?? []) {
-          if (part.type === "text") {
-            const text = part.text;
-            // Try JSON first
-            const fromJson = parseTodosFromJSON(text);
-            if (fromJson) {
-              setTodos(fromJson);
-              return;
-            }
-            // Try markdown table
-            const fromMd = parseTodosFromMarkdownTable(text);
-            if (fromMd) {
-              setTodos(fromMd);
-              return;
-            }
+          if (part.type !== "text") continue;
+          const text = part.text;
+          const fromJson = parseTodosFromJSON(text);
+          if (fromJson) {
+            collected.push(...fromJson);
+            continue;
+          }
+          const fromMd = parseTodosFromMarkdownTable(text);
+          if (fromMd) {
+            collected.push(...fromMd);
+            continue;
           }
         }
+      }
+
+      if (collected.length > 0) {
+        console.debug("merging todos parsed from assistant (collected)", collected);
+        setTodos(mergeIncomingTodos(collected));
       }
     })();
   }, [agentMessages]);
@@ -233,8 +277,11 @@ export default function Chat() {
       <div className="h-[calc(100vh-2rem)] w-full mx-auto max-w-lg flex flex-col shadow-xl rounded-md overflow-hidden relative border border-neutral-300 dark:border-neutral-800">
         {/* Todo panel: shows parsed todos and allows local edits */}
         <div className="px-4 py-2 border-b border-neutral-200 dark:border-neutral-800">
-          <h3 className="font-medium mb-2">Todo List (parsed from AI)</h3>
-          <TodoTable
+          <h3 className="font-medium mb-2">Todo List (parsed from AI) <span className="text-xs text-muted-foreground">({todos.length} items)</span></h3>
+          {showDebug && (
+            <pre className="text-xs text-muted-foreground max-h-32 overflow-auto bg-white/5 p-2 rounded mb-2">{JSON.stringify(todos, null, 2)}</pre>
+          )}
+           <TodoTable
             todos={todos}
             onToggleDone={(id) => {
               setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
