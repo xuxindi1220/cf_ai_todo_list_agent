@@ -214,6 +214,15 @@
   }
 }
 
+/* Ensure native checkboxes use the project's accent color and are clickable.
+   This fixes cases where the checkbox's checked mark doesn't appear blue
+   when the underlying state changes. */
+input[type="checkbox"] {
+  /* Use theme blue (falls back to a sensible blue if variable isn't available) */
+  accent-color: var(--color-blue-700, #2563eb);
+  cursor: pointer;
+}
+
 /* Use for elements that require a tab-focus state (most elements) */
 .add-focus {
   @apply focus-visible:ring-ob-focus outline-none focus:opacity-100 focus-visible:ring-1 *:in-focus:opacity-100;

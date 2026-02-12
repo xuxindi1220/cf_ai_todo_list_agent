@@ -82,13 +82,21 @@ export function parseTodosFromMarkdownTable(md: string): Todo[] | null {
     for (let i = 0; i < header.length; i++) {
       obj[header[i].toLowerCase()] = cols[i] ?? "";
     }
+    const doneRaw = obj.done ?? "";
+    let doneVal: boolean | undefined;
+    if (doneRaw === "") {
+      doneVal = undefined;
+    } else {
+      const lower = doneRaw.toLowerCase();
+      doneVal = lower.startsWith("y") || lower.startsWith("t") || lower.includes("[x]");
+    }
     const t: Todo = {
       id: obj.id || `md_${Math.random().toString(36).slice(2, 8)}`,
       title: obj.title || obj.task || "",
       due: obj.due || undefined,
       priority: (obj.priority as Todo["priority"]) || undefined,
       estimatedMinutes: obj.estimatedminutes ? Number(obj.estimatedminutes) : undefined,
-      done: (obj.done || "").toLowerCase().startsWith("y") || (obj.done || "").toLowerCase().startsWith("t") || (obj.done || "").includes("[x]")
+      done: doneVal
     };
     todos.push(t);
   }
@@ -103,7 +111,7 @@ export function normalizeTodo(input: any): Todo {
     due: input.due ?? input.date ?? undefined,
     priority: input.priority ?? undefined,
     estimatedMinutes: typeof input.estimatedMinutes === "number" ? input.estimatedMinutes : (input.estimatedMinutes ? Number(input.estimatedMinutes) : undefined),
-    done: !!input.done,
+    done: typeof input.done === 'boolean' ? input.done : undefined,
     createdAt: input.createdAt ?? new Date().toISOString()
   };
 }

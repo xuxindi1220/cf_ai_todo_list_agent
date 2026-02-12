@@ -69,7 +69,28 @@ export function TodoTable({ todos, onToggleDone, onAdd, onUpdate, onDelete }: Pr
             {todos.map((t) => (
               <tr key={t.id} className="border-t border-neutral-200 dark:border-neutral-800">
                 <td>
-                  <input type="checkbox" checked={!!t.done} onChange={() => onToggleDone(t.id)} />
+                  {/* Use a styled button as the visual checkbox to avoid native checkbox rendering issues across browsers */}
+                  <button
+                    type="button"
+                    aria-pressed={Boolean(t.done)}
+                    aria-label={`${t.title} ${t.done ? "done" : "not done"}`}
+                    onClick={() => {
+                      console.debug("TodoTable: toggle click", { id: t.id, todoDone: t.done });
+                      onToggleDone(t.id);
+                    }}
+                    className={
+                      `w-5 h-5 inline-flex items-center justify-center rounded border transition-colors ` +
+                      (t.done
+                        ? "bg-blue-600 border-blue-600 text-white"
+                        : "bg-white border-neutral-300 dark:bg-neutral-900 dark:border-neutral-700")
+                    }
+                  >
+                    {t.done && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                        <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                  </button>
                 </td>
                 <td>{t.title}</td>
                 <td>{t.due ?? "-"}</td>
@@ -78,7 +99,7 @@ export function TodoTable({ todos, onToggleDone, onAdd, onUpdate, onDelete }: Pr
                 <td>
                   <div className="flex gap-2">
                     <Button variant="ghost" size="sm" onClick={() => onDelete(t.id)}>Del</Button>
-                    <Button variant="ghost" size="sm" onClick={() => onUpdate(t.id, { done: !t.done })}>Toggle</Button>
+                    {/* Removed the duplicate Toggle button; checkbox is the canonical control */}
                   </div>
                 </td>
               </tr>

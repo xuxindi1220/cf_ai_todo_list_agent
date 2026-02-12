@@ -206,6 +206,14 @@ export default function Chat() {
   // Local todo list state for demo / UI
   const [todos, setTodos] = useState<Todo[]>([]);
 
+  // Track timestamps of local toggles to avoid immediate assistant overwrites
+  const localToggleTimes = useRef<Map<string, number>>(new Map());
+
+  // Debug: log todos whenever they change to help trace UI issues
+  useEffect(() => {
+    console.debug("APP: todos state changed", todos);
+  }, [todos]);
+
   // Helper: normalize title for matching
   const titleKey = (s?: string) => (s ? String(s).trim().toLowerCase() : "");
 
@@ -228,34 +236,74 @@ export default function Chat() {
     const fingerprint = (t: Todo) => `${titleKey(t.title)}|${canonicalDue(t.due)}|${t.priority ?? ""}|${typeof t.estimatedMinutes === 'number' ? String(t.estimatedMinutes) : String(t.estimatedMinutes ?? "")}`;
     const byFingerprint = new Map(prev.map((p) => [fingerprint(p), p]));
 
+    // helper: return shallow copy containing only keys with defined values
+    const definedOnly = <T extends Record<string, any>>(obj: T) => {
+      const out: Partial<T> = {};
+      for (const k of Object.keys(obj) as Array<keyof T>) {
+        if (obj[k] !== undefined) out[k] = obj[k];
+      }
+      return out as Partial<T>;
+    };
+
     for (const raw of incoming) {
-      const n: Todo = {
-        id: raw.id ?? `todo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        title: (raw.title ?? "Untitled").trim(),
+      // Build a partial candidate where fields may be undefined to indicate "no update"
+      const partial: Partial<Todo> = {
+        id: raw.id ?? undefined,
+        title: raw.title ? String(raw.title).trim() : undefined,
         due: raw.due ?? undefined,
         priority: raw.priority ?? undefined,
-        estimatedMinutes: typeof raw.estimatedMinutes === "number" ? raw.estimatedMinutes : undefined,
-        done: typeof raw.done === "boolean" ? raw.done : false,
-        createdAt: raw.createdAt ?? new Date().toISOString()
+        estimatedMinutes: typeof raw.estimatedMinutes === "number" ? raw.estimatedMinutes : (raw.estimatedMinutes ? Number(raw.estimatedMinutes) : undefined),
+        // IMPORTANT: preserve undefined if the incoming todo doesn't explicitly include done
+        done: typeof raw.done === "boolean" ? raw.done : undefined,
+        createdAt: raw.createdAt ?? undefined
       };
 
-      const fp = fingerprint(n);
-      const existingById = n.id ? byId.get(n.id) : undefined;
-      const existingByTitle = byTitle.get(titleKey(n.title));
-      const existingByFp = byFingerprint.get(fp);
+      // for fingerprint and matching, we need concrete values; use title/due from partial or fallback
+      const matchTitle = partial.title ?? String(raw.title ?? "Untitled");
+      const fpCandidate = `${titleKey(matchTitle)}|${canonicalDue(partial.due ?? raw.due)}|${partial.priority ?? raw.priority ?? ""}|${typeof partial.estimatedMinutes === 'number' ? String(partial.estimatedMinutes) : String(partial.estimatedMinutes ?? raw.estimatedMinutes ?? "")}`;
 
-      // Priority: exact id match > fingerprint match > title match
+      const existingById = partial.id ? byId.get(partial.id) : undefined;
+      const existingByFp = byFingerprint.get(fpCandidate);
+      const existingByTitle = byTitle.get(titleKey(matchTitle));
+
       const existing = existingById ?? existingByFp ?? existingByTitle;
 
       if (existing) {
         const idx = result.findIndex((r) => r.id === existing.id);
-        if (idx !== -1) result[idx] = { ...result[idx], ...n };
+        if (idx !== -1) {
+          // merge only defined fields to avoid overwriting local edits like done=false when incoming omits done
+          const defined = definedOnly(partial);
+
+          // If incoming defines `done`, only apply it when incoming.createdAt is newer than existing.createdAt
+          if (defined.done !== undefined) {
+            const existingTs = result[idx].createdAt ? Date.parse(result[idx].createdAt) : 0;
+            // If incoming has a createdAt timestamp, compare; otherwise treat it as fresh (use Date.now())
+            // so that assistant-originated explicit `done` flags are applied, unless a very-recent local toggle exists.
+            const incomingTs = partial.createdAt ? Date.parse(partial.createdAt) : Date.now();
+            if (incomingTs <= existingTs) {
+              // drop done from defined so we don't overwrite a newer local change
+              delete (defined as Partial<Todo>).done;
+            }
+          }
+
+          result[idx] = { ...result[idx], ...defined };
+        }
       } else {
-        result.push(n);
+        // When adding a new todo, fill in defaults for UI (e.g., done = false)
+        const newTodo: Todo = {
+          id: partial.id ?? `todo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          title: (partial.title ?? String(raw.title ?? "Untitled")).trim(),
+          due: partial.due ?? raw.due ?? undefined,
+          priority: (partial.priority ?? raw.priority) as Todo["priority"] | undefined,
+          estimatedMinutes: typeof partial.estimatedMinutes === "number" ? partial.estimatedMinutes : (typeof raw.estimatedMinutes === "number" ? raw.estimatedMinutes : undefined),
+          done: typeof partial.done === "boolean" ? partial.done : false,
+          createdAt: partial.createdAt ?? raw.createdAt ?? new Date().toISOString()
+        };
+        result.push(newTodo);
         // update maps so subsequent incoming items see the newly added item
-        byId.set(n.id, n);
-        byTitle.set(titleKey(n.title), n);
-        byFingerprint.set(fp, n);
+        byId.set(newTodo.id, newTodo);
+        byTitle.set(titleKey(newTodo.title), newTodo);
+        byFingerprint.set(fingerprint(newTodo), newTodo);
       }
     }
 
@@ -274,10 +322,15 @@ export default function Chat() {
           const text = part.text;
           const fromJson = parseTodosFromJSON(text);
           if (fromJson) {
-            collected.push(...fromJson);
+            // strip 'done' unless explicitly provided to avoid overwriting local toggles
+            const normalized = fromJson.map((t) => ({ ...t, done: typeof t.done === 'boolean' ? t.done : undefined }));
+            collected.push(...normalized);
           } else {
             const fromMd = parseTodosFromMarkdownTable(text);
-            if (fromMd) collected.push(...fromMd);
+            if (fromMd) {
+              const normalized = fromMd.map((t) => ({ ...t, done: typeof t.done === 'boolean' ? t.done : undefined }));
+              collected.push(...normalized);
+            }
           }
         }
       }
@@ -302,9 +355,33 @@ export default function Chat() {
            <TodoTable
             todos={todos}
             onToggleDone={(id) => {
-              setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
-              // send a user message back to agent to keep conversation in sync
-              sendMessage({ role: "user", parts: [{ type: "text", text: `Toggled todo ${id}` }] });
+              // update local UI immediately and send a compact markdown snapshot to the agent
+              setTodos((prev) => {
+                const now = new Date().toISOString();
+                const newState = prev.map((t) => (t.id === id ? { ...t, done: !t.done, createdAt: now } : t));
+
+                // record local toggle timestamp (ms)
+                try {
+                  localToggleTimes.current.set(id, Date.now());
+                } catch (e) {
+                  console.warn('failed to set local toggle time', e);
+                }
+
+                // debug: log local state after toggle so developer can verify immediate UI change in console
+                console.debug("onToggleDone: id=", id, "newState=", newState);
+
+                // Fire-and-forget: notify the agent with the updated table so it can stay in sync
+                (async () => {
+                  try {
+                    const md = todosToMarkdownTable(newState);
+                    await sendMessage({ role: "user", parts: [{ type: "text", text: `Updated todos (toggled ${id}):\n\n${md}` }] });
+                  } catch (e) {
+                    console.warn("Failed to notify agent about toggled todo", e);
+                  }
+                })();
+
+                return newState;
+              });
             }}
             onAdd={(todo) => {
               // Use mergeIncomingTodos to dedupe by id/title and merge into existing state
