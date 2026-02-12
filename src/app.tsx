@@ -214,6 +214,19 @@ export default function Chat() {
     const result = [...prev];
     const byId = new Map(prev.map((p) => [p.id, p]));
     const byTitle = new Map(prev.map((p) => [titleKey(p.title), p]));
+    // new: fingerprint map to detect duplicates more robustly (title + due + priority + estimatedMinutes)
+    const canonicalDue = (d?: string) => {
+      if (!d) return "";
+      try {
+        const dt = new Date(d);
+        if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10); // YYYY-MM-DD
+      } catch (e) {
+        // ignore
+      }
+      return String(d).trim();
+    };
+    const fingerprint = (t: Todo) => `${titleKey(t.title)}|${canonicalDue(t.due)}|${t.priority ?? ""}|${typeof t.estimatedMinutes === 'number' ? String(t.estimatedMinutes) : String(t.estimatedMinutes ?? "")}`;
+    const byFingerprint = new Map(prev.map((p) => [fingerprint(p), p]));
 
     for (const raw of incoming) {
       const n: Todo = {
@@ -226,15 +239,23 @@ export default function Chat() {
         createdAt: raw.createdAt ?? new Date().toISOString()
       };
 
-      const existingById = byId.get(n.id);
+      const fp = fingerprint(n);
+      const existingById = n.id ? byId.get(n.id) : undefined;
       const existingByTitle = byTitle.get(titleKey(n.title));
-      const existing = existingById ?? existingByTitle;
+      const existingByFp = byFingerprint.get(fp);
+
+      // Priority: exact id match > fingerprint match > title match
+      const existing = existingById ?? existingByFp ?? existingByTitle;
 
       if (existing) {
         const idx = result.findIndex((r) => r.id === existing.id);
         if (idx !== -1) result[idx] = { ...result[idx], ...n };
       } else {
         result.push(n);
+        // update maps so subsequent incoming items see the newly added item
+        byId.set(n.id, n);
+        byTitle.set(titleKey(n.title), n);
+        byFingerprint.set(fp, n);
       }
     }
 
@@ -254,12 +275,9 @@ export default function Chat() {
           const fromJson = parseTodosFromJSON(text);
           if (fromJson) {
             collected.push(...fromJson);
-            continue;
-          }
-          const fromMd = parseTodosFromMarkdownTable(text);
-          if (fromMd) {
-            collected.push(...fromMd);
-            continue;
+          } else {
+            const fromMd = parseTodosFromMarkdownTable(text);
+            if (fromMd) collected.push(...fromMd);
           }
         }
       }
@@ -289,10 +307,22 @@ export default function Chat() {
               sendMessage({ role: "user", parts: [{ type: "text", text: `Toggled todo ${id}` }] });
             }}
             onAdd={(todo) => {
-              setTodos((prev) => [...prev, todo]);
-              // Optionally send the updated todos as markdown to the agent
-              const md = todosToMarkdownTable([...(todos ?? []), todo]);
-              sendMessage({ role: "user", parts: [{ type: "text", text: `Added todo:\n\n${md}` }] });
+              // Use mergeIncomingTodos to dedupe by id/title and merge into existing state
+              setTodos((prev) => {
+                const newState = mergeIncomingTodos([todo])(prev);
+
+                // Fire-and-forget: notify the agent with the compact markdown without blocking the UI
+                (async () => {
+                  try {
+                    const md = todosToMarkdownTable(newState);
+                    await sendMessage({ role: "user", parts: [{ type: "text", text: `Added todo:\n\n${md}` }] });
+                  } catch (e) {
+                    console.warn("Failed to notify agent about added todo", e);
+                  }
+                })();
+
+                return newState;
+              });
             }}
             onUpdate={(id, patch) => {
               setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
