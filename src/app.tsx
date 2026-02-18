@@ -204,18 +204,138 @@ export default function Chat() {
   };
 
   // Local todo list state for demo / UI
-  const [todos, setTodos] = useState<Todo[]>([]);
+  const LOCAL_STORAGE_KEY = "ai:todos:v1";
+  const DELETED_STORAGE_KEY = "ai:deleted:v1";
+  // Load persisted deleted ids/fingerprints
+  const loadPersistedDeleted = () => {
+    try {
+      const raw = localStorage.getItem(DELETED_STORAGE_KEY);
+      if (!raw) return { ids: {} as Record<string, number>, fps: {} as Record<string, number> };
+      const parsed = JSON.parse(raw) as { ids?: Record<string, number>; fps?: Record<string, number> };
+      return { ids: parsed.ids ?? {}, fps: parsed.fps ?? {} };
+    } catch (e) {
+      console.warn('failed to read deleted info from localStorage', e);
+      return { ids: {} as Record<string, number>, fps: {} as Record<string, number> };
+    }
+  };
+  const [todos, setTodos] = useState<Todo[]>(() => {
+    try {
+      const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const deleted = loadPersistedDeleted();
+      if (raw) {
+        const parsed = JSON.parse(raw) as Todo[];
+        // ensure parsed items have ids and proper shape
+        const normalized = parsed.map((p) => ({ ...p, id: p.id ?? `todo-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, createdAt: p.createdAt ?? new Date().toISOString() }));
+        // prune any items that match persisted deleted ids or fingerprints
+        const pruned = normalized.filter((p) => {
+          if (p.id && deleted.ids[p.id]) return false;
+          const fp = `${(p.title ?? "").toString().trim().toLowerCase()}|${(function (d?: string) { if (!d) return ''; try { const dt = new Date(d); if (!isNaN(dt.getTime())) return dt.toISOString().slice(0,10); } catch (e) {} return String(d).trim(); })(p.due)}|${p.priority ?? ''}|${typeof p.estimatedMinutes === 'number' ? String(p.estimatedMinutes) : String(p.estimatedMinutes ?? '')}`;
+          if (deleted.fps[fp]) return false;
+          return true;
+        });
+        return pruned;
+      }
+    } catch (e) {
+      console.warn("failed to read todos from localStorage", e);
+    }
+    return [];
+  });
 
   // Track timestamps of local toggles to avoid immediate assistant overwrites
   const localToggleTimes = useRef<Map<string, number>>(new Map());
+  // Track timestamps of local deletions to avoid assistant re-adding deleted todos
+  const localDeleteTimes = useRef<Map<string, number>>(new Map());
+  // Track fingerprints of locally deleted todos to prevent re-adding similar items the assistant might emit
+  const localDeletedFingerprints = useRef<Map<string, number>>(new Map());
+  // Track ids of locally deleted todos (stronger guarantee — skip any incoming with same id)
+  const localDeletedIds = useRef<Set<string>>(new Set());
+
+  // Initialize deleted maps from localStorage
+  (function initDeletedFromStorage() {
+    try {
+      const { ids, fps } = loadPersistedDeleted();
+      for (const [id, ts] of Object.entries(ids)) {
+        if (typeof ts === 'number') {
+          localDeleteTimes.current.set(id, ts);
+          localDeletedIds.current.add(id);
+        }
+      }
+      for (const [fp, ts] of Object.entries(fps)) {
+        if (typeof ts === 'number') {
+          localDeletedFingerprints.current.set(fp, ts);
+        }
+      }
+    } catch (e) {
+      console.warn('failed to initialize deleted maps from storage', e);
+    }
+  })();
+
+  const persistDeletedToStorage = () => {
+    try {
+      const idsObj: Record<string, number> = {};
+      const fpsObj: Record<string, number> = {};
+      for (const id of localDeletedIds.current) {
+        const ts = localDeleteTimes.current.get(id);
+        if (ts) idsObj[id] = ts;
+      }
+      for (const [fp, ts] of localDeletedFingerprints.current.entries()) {
+        fpsObj[fp] = ts;
+      }
+      localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify({ ids: idsObj, fps: fpsObj }));
+    } catch (e) {
+      console.warn('failed to persist deleted info to localStorage', e);
+    }
+  };
 
   // Debug: log todos whenever they change to help trace UI issues
   useEffect(() => {
     console.debug("APP: todos state changed", todos);
   }, [todos]);
 
+  // Persist todos to localStorage so UI changes (like toggles) survive refresh
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(todos));
+    } catch (e) {
+      console.warn('failed to write todos to localStorage', e);
+    }
+  }, [todos]);
+
   // Helper: normalize title for matching
   const titleKey = (s?: string) => (s ? String(s).trim().toLowerCase() : "");
+
+  // Helper used for fingerprinting outside of mergeIncomingTodos (for pruning on init)
+  const canonicalDueTop = (d?: string) => {
+    if (!d) return "";
+    try {
+      const dt = new Date(d);
+      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+    } catch (e) {}
+    return String(d).trim();
+  };
+  const fingerprintTop = (t: Todo) => `${titleKey(t.title)}|${canonicalDueTop(t.due)}|${t.priority ?? ""}|${typeof t.estimatedMinutes === 'number' ? String(t.estimatedMinutes) : String(t.estimatedMinutes ?? "")}`;
+
+  // On mount: prune any todos that match locally-deleted ids or fingerprints (handles refresh case)
+  useEffect(() => {
+    try {
+      if (localDeletedIds.current.size === 0 && localDeletedFingerprints.current.size === 0) return;
+      setTodos((prev) => {
+        const newState = prev.filter((t) => {
+          if (t.id && localDeletedIds.current.has(t.id)) return false;
+          const fp = fingerprintTop(t);
+          if (localDeletedFingerprints.current.has(fp)) return false;
+          return true;
+        });
+        if (newState.length !== prev.length) {
+          // persisted via existing todos effect
+          console.debug('Pruned locally-deleted todos on init', { before: prev.length, after: newState.length });
+        }
+        return newState;
+      });
+    } catch (e) {
+      console.warn('failed to prune todos on init', e);
+    }
+  }, []);
 
   // Helper: merge incoming todos into existing state, dedup by id then normalized title
   const mergeIncomingTodos = (incoming: Todo[]) => (prev: Todo[]) => {
@@ -233,7 +353,7 @@ export default function Chat() {
       }
       return String(d).trim();
     };
-    const fingerprint = (t: Todo) => `${titleKey(t.title)}|${canonicalDue(t.due)}|${t.priority ?? ""}|${typeof t.estimatedMinutes === 'number' ? String(t.estimatedMinutes) : String(t.estimatedMinutes ?? "")}`;
+    const fingerprint = (t: Todo | { title?: string; due?: string; priority?: any; estimatedMinutes?: any }) => `${titleKey(t.title)}|${canonicalDue(t.due)}|${t.priority ?? ""}|${typeof t.estimatedMinutes === 'number' ? String(t.estimatedMinutes) : String(t.estimatedMinutes ?? "")}`;
     const byFingerprint = new Map(prev.map((p) => [fingerprint(p), p]));
 
     // helper: return shallow copy containing only keys with defined values
@@ -246,6 +366,19 @@ export default function Chat() {
     };
 
     for (const raw of incoming) {
+      // compute a fingerprint candidate for this incoming item early so we can check deleted fingerprints
+      const fpCandidateEarly = fingerprint(raw as any);
+      const localFpDelTs = localDeletedFingerprints.current.get(fpCandidateEarly);
+      const localDelTs = raw.id ? localDeleteTimes.current.get(raw.id) : undefined;
+      const incomingCreated = raw.createdAt ? Date.parse(raw.createdAt) : 0;
+      if (localFpDelTs && incomingCreated <= localFpDelTs) {
+        console.debug(`Skipping incoming todo (fingerprint) because local deletion of same fingerprint is newer`);
+        continue;
+      }
+      if (localDelTs && incomingCreated <= localDelTs) {
+        console.debug(`Skipping incoming todo ${raw.id} because local deletion is newer`);
+        continue;
+      }
       // Build a partial candidate where fields may be undefined to indicate "no update"
       const partial: Partial<Todo> = {
         id: raw.id ?? undefined,
@@ -277,12 +410,25 @@ export default function Chat() {
           // If incoming defines `done`, only apply it when incoming.createdAt is newer than existing.createdAt
           if (defined.done !== undefined) {
             const existingTs = result[idx].createdAt ? Date.parse(result[idx].createdAt) : 0;
-            // If incoming has a createdAt timestamp, compare; otherwise treat it as fresh (use Date.now())
-            // so that assistant-originated explicit `done` flags are applied, unless a very-recent local toggle exists.
-            const incomingTs = partial.createdAt ? Date.parse(partial.createdAt) : Date.now();
-            if (incomingTs <= existingTs) {
-              // drop done from defined so we don't overwrite a newer local change
-              delete (defined as Partial<Todo>).done;
+            // If incoming has a createdAt timestamp, compare; otherwise treat it as OLD (0)
+            // so that assistant-originated explicit `done` flags are NOT applied when they lack timestamps.
+            const incomingTs = partial.createdAt ? Date.parse(partial.createdAt) : 0;
+            // If user locally toggled recently, prefer the local toggle over assistant updates
+            try {
+              const localToggleTs = localToggleTimes.current.get(result[idx].id) ?? 0;
+              const RECENT_MS = 10_000; // 10 seconds grace window
+              if (localToggleTs && Date.now() - localToggleTs < RECENT_MS) {
+                console.debug(`Skipping incoming done for ${result[idx].id} because of recent local toggle`);
+                delete (defined as Partial<Todo>).done;
+              } else if (incomingTs <= existingTs) {
+                // drop done from defined so we don't overwrite a newer local change
+                delete (defined as Partial<Todo>).done;
+              }
+            } catch (e) {
+              // fallback to existing compare
+              if (incomingTs <= existingTs) {
+                delete (defined as Partial<Todo>).done;
+              }
             }
           }
 
@@ -405,7 +551,47 @@ export default function Chat() {
               setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
             }}
             onDelete={(id) => {
-              setTodos((prev) => prev.filter((t) => t.id !== id));
+              setTodos((prev) => {
+                const deleted = prev.find((t) => t.id === id);
+                const newState = prev.filter((t) => t.id !== id);
+
+                // Record local delete timestamp so we don't re-add if assistant sends old data
+                try {
+                  localDeleteTimes.current.set(id, Date.now());
+                  // mark id as deleted
+                  localDeletedIds.current.add(id);
+                  // persist deleted info immediately
+                  persistDeletedToStorage();
+                  // schedule cleanup after 5 minutes
+                  setTimeout(() => {
+                    try {
+                      localDeletedIds.current.delete(id);
+                      localDeleteTimes.current.delete(id);
+                      persistDeletedToStorage();
+                    } catch (e) {}
+                  }, 5 * 60 * 1000);
+                  // also record the fingerprint so similar assistant-emitted items aren't re-added
+                  if (deleted) {
+                    const fp = `${titleKey(deleted.title)}|${(function (d?: string) { if (!d) return ''; try { const dt = new Date(d); if (!isNaN(dt.getTime())) return dt.toISOString().slice(0,10); } catch (e) {} return String(d).trim(); })(deleted.due)}|${deleted.priority ?? ''}|${typeof deleted.estimatedMinutes === 'number' ? String(deleted.estimatedMinutes) : String(deleted.estimatedMinutes ?? '')}`;
+                    localDeletedFingerprints.current.set(fp, Date.now());
+                    persistDeletedToStorage();
+                  }
+                } catch (e) {
+                  console.warn('failed to set local delete time', e);
+                }
+
+                // Fire-and-forget: notify the agent with the compact markdown so the assistant stays in sync
+                (async () => {
+                  try {
+                    const md = todosToMarkdownTable(newState);
+                    await sendMessage({ role: "user", parts: [{ type: "text", text: `Deleted todo (${id}):\n\n${md}` }] });
+                  } catch (e) {
+                    console.warn("Failed to notify agent about deleted todo", e);
+                  }
+                })();
+
+                return newState;
+              });
             }}
           />
         </div>

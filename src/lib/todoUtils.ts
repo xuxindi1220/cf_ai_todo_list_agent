@@ -112,7 +112,9 @@ export function normalizeTodo(input: any): Todo {
     priority: input.priority ?? undefined,
     estimatedMinutes: typeof input.estimatedMinutes === "number" ? input.estimatedMinutes : (input.estimatedMinutes ? Number(input.estimatedMinutes) : undefined),
     done: typeof input.done === 'boolean' ? input.done : undefined,
-    createdAt: input.createdAt ?? new Date().toISOString()
+    // IMPORTANT: do not invent a createdAt timestamp here. If the assistant/source
+    // didn't provide createdAt, leave it undefined so caller can decide how to treat it.
+    createdAt: input.createdAt ?? undefined
   };
 }
 
