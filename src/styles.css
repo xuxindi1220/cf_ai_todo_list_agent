@@ -320,3 +320,16 @@ input[type="checkbox"] {
     transform: rotate(360deg) scale(0.9);
   }
 }
+
+/* Chat-specific fixes: hide duplicate textareas and adjacent plus/minus controls */
+.chat-center textarea:not(.main-chat-textarea) {
+  display: none !important;
+}
+.chat-center .chat-input-area button:not([type="submit"]) {
+  display: none !important;
+}
+
+/* Ensure the main textarea remains visible and styled */
+.main-chat-textarea {
+  display: block !important;
+}

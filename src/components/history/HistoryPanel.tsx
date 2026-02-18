@@ -12,11 +12,13 @@ type StoredSession = {
 export function HistoryPanel({
   todos,
   messages,
-  onLoad
+  onLoad,
+  refreshSignal,
 }: {
   todos: Todo[];
   messages: any[];
   onLoad: (session: StoredSession) => void;
+  refreshSignal?: number;
 }) {
   const [list, setList] = useState<StoredSession[]>([]);
   const [loading, setLoading] = useState(false);
@@ -39,7 +41,13 @@ export function HistoryPanel({
 
   useEffect(() => {
     fetchList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (typeof refreshSignal !== 'undefined') fetchList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
 
   const handleSave = async () => {
     setSaving(true);
