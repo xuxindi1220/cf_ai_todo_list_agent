@@ -15,6 +15,7 @@ import { Textarea } from "@/components/textarea/Textarea";
 import { MemoizedMarkdown } from "@/components/memoized-markdown";
 import { ToolInvocationCard } from "@/components/tool-invocation-card/ToolInvocationCard";
 import TodoTable from "@/components/todo/TodoTable";
+import HistoryPanel from "@/components/history/HistoryPanel";
 import { parseTodosFromJSON, parseTodosFromMarkdownTable, todosToMarkdownTable } from "./lib/todoUtils";
 import type { Todo } from "./shared";
 
@@ -309,7 +310,7 @@ export default function Chat() {
     if (!d) return "";
     try {
       const dt = new Date(d);
-      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+      if (!isNaN(dt.getTime())) return dt.toISOString().slice(10, 19);
     } catch (e) {}
     return String(d).trim();
   };
@@ -347,7 +348,7 @@ export default function Chat() {
       if (!d) return "";
       try {
         const dt = new Date(d);
-        if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10); // YYYY-MM-DD
+        if (!isNaN(dt.getTime())) return dt.toISOString().slice(10, 19); // YYYY-MM-DD
       } catch (e) {
         // ignore
       }
@@ -625,6 +626,24 @@ export default function Chat() {
               toggled={showDebug}
               aria-label="Toggle debug mode"
               onClick={() => setShowDebug((prev) => !prev)}
+            />
+          </div>
+
+          <div className="mr-2">
+            <HistoryPanel
+              todos={todos}
+              messages={agentMessages}
+              onLoad={(session) => {
+                // Load a saved session into UI: replace todos and show messages snapshot in debug
+                try {
+                  setTodos(session.todos ?? []);
+                  // optionally inject a system message showing loaded snapshot
+                  // We don't mutate agentMessages (they come from useAgentChat), but show in debug
+                  console.debug('Loaded session', session);
+                } catch (e) {
+                  console.warn('failed to load session', e);
+                }
+              }}
             />
           </div>
 

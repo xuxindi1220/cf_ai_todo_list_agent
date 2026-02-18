@@ -3,11 +3,12 @@
 declare namespace Cloudflare {
 	interface GlobalProps {
 		mainModule: typeof import("./src/server");
-		durableNamespaces: "Chat";
+		durableNamespaces: "Chat" | "Histories";
 	}
 	interface Env {
 		OPENAI_API_KEY: string;
 		Chat: DurableObjectNamespace<import("./src/server").Chat>;
+		Histories: DurableObjectNamespace<any>;
 		AI: Ai;
 	}
 }

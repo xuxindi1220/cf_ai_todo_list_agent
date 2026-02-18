@@ -169,6 +169,30 @@ export default {
       }
     }
 
+    // New API: histories proxy to Durable Object
+    if (url.pathname.startsWith("/api/histories")) {
+      try {
+        // Use a singleton DO instance named 'global' to store sessions
+        const namespace = env.Histories as DurableObjectNamespace;
+        const id = namespace.idFromName("global");
+        const stub = namespace.get(id);
+
+        // Forward the request to the Durable Object
+        const forwardUrl = new URL(request.url);
+        // adjust pathname to be handled by DO (pass through)
+        const doRequest = new Request(forwardUrl.toString(), {
+          method: request.method,
+          headers: request.headers,
+          body: request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.clone().arrayBuffer(),
+        });
+
+        return await stub.fetch(doRequest);
+      } catch (e) {
+        console.error('histories proxy error', e);
+        return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       console.error(
         "OPENAI_API_KEY is not set, don't forget to set it locally in .dev.vars, and use `wrangler secret bulk .dev.vars` to upload it to production"
