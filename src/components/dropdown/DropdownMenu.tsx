@@ -125,7 +125,6 @@ const DropdownMenu = ({
                 className="px-2.5 py-2.5 dark:border-neutral-800"
                 onClick={(e) => e.preventDefault()}
                 onKeyDown={(e) => e.preventDefault()}
-                // biome-ignore lint/suspicious/noArrayIndexKey: TODO
                 key={index}
               >
                 {item.titleContent}
@@ -133,14 +132,12 @@ const DropdownMenu = ({
             );
           } else if (item.type === "divider") {
             return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: TODO
               <div className="my-1.5 w-full px-2.5" key={index}>
                 <div className="h-px w-full bg-neutral-200 dark:bg-neutral-800" />
               </div>
             );
           } else if (item.type === "link" || item.type === "button") {
             return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: TODO
               <DropdownMenuPrimitive.Item asChild key={index}>
                 {item.type === "link" ? (
                   <a

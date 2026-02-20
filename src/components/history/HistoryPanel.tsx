@@ -43,6 +43,7 @@ export function HistoryPanel({
             : [];
           setList([...localList, ...serverList]);
         } catch (e) {
+          console.error(e);
           setList(serverList);
         }
       } else {
@@ -54,6 +55,7 @@ export function HistoryPanel({
             : [];
           setList(localList);
         } catch (e) {
+          console.error(e);
           setList([]);
         }
       }
@@ -65,6 +67,7 @@ export function HistoryPanel({
         const localList: StoredSession[] = rawLocal ? JSON.parse(rawLocal) : [];
         setList(localList);
       } catch (e2) {
+        console.error(e2);
         setList([]);
       }
     } finally {
@@ -75,7 +78,7 @@ export function HistoryPanel({
   useEffect(() => {
     fetchList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchList]);
 
   // Listen for global updates so external code (e.g. app) can notify us after writing optimistic entries
   useEffect(() => {
@@ -83,7 +86,7 @@ export function HistoryPanel({
     window.addEventListener("histories:updated", onUpdated);
     return () => window.removeEventListener("histories:updated", onUpdated);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchList]);
 
   // Listen for save requests from the app (e.g., top '+' button). Re-register when todos/messages change
   useEffect(() => {
@@ -111,7 +114,7 @@ export function HistoryPanel({
   useEffect(() => {
     if (typeof refreshSignal !== "undefined") fetchList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSignal]);
+  }, [refreshSignal, fetchList]);
 
   const handleSave = async (optimisticId?: string) => {
     setSaving(true);
@@ -159,7 +162,7 @@ export function HistoryPanel({
             }
           }
         } catch (e) {
-          // ignore parse errors
+          console.error(e);
         }
         await fetchList();
         return;
@@ -316,6 +319,7 @@ export function HistoryPanel({
         <h4 className="text-sm font-medium">Saved Sessions</h4>
         <div className="flex items-center gap-2">
           <button
+            type="submit"
             className="px-2 py-1 bg-primary text-white rounded"
             onClick={() => void handleSave()}
             disabled={saving}
@@ -323,6 +327,7 @@ export function HistoryPanel({
             {saving ? "Saving..." : "Save Current"}
           </button>
           <button
+            type="submit"
             className="px-2 py-1 border rounded"
             onClick={fetchList}
             disabled={loading}
@@ -355,12 +360,14 @@ export function HistoryPanel({
               </div>
               <div className="flex flex-col gap-1">
                 <button
+                  type="submit"
                   className="px-2 py-1 bg-green-600 text-white rounded text-xs"
                   onClick={() => handleLoad(s.id)}
                 >
                   Display
                 </button>
                 <button
+                  type="submit"
                   className="px-2 py-1 bg-red-600 text-white rounded text-xs"
                   onClick={() => handleDelete(s.id)}
                 >

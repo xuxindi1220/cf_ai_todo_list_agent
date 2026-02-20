@@ -25,7 +25,6 @@ export const MemoizedMarkdown = memo(
   ({ content, id }: { content: string; id: string }) => {
     const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content]);
     return blocks.map((block, index) => (
-      // biome-ignore lint/suspicious/noArrayIndexKey: immutable index
       <MemoizedMarkdownBlock content={block} key={`${id}-block_${index}`} />
     ));
   }

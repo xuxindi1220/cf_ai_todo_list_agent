@@ -147,7 +147,12 @@ export default {
         });
 
         // Strict prompt guiding the model to return only a JSON object matching our schema
-        const prompt = `Extract todos from the following text. If there are todos present, return a JSON object with a single key \"todos\" whose value is an array of todo objects. Each todo object must contain: title (string), due (ISO date string, optional), priority (one of \"low\", \"medium\", \"high\"; optional), estimatedMinutes (number, optional), done (boolean, optional). If there are no todos, return { "todos": null }. Output must be valid JSON only, nothing else. Here is the input:\n\n${text}`;
+        const prompt = `Extract todos from the following text. 
+If there are todos present, return a JSON object with a single key "todos" whose value is an array of todo objects. 
+Each todo object must contain: title (string), due (ISO date string, optional), 
+priority (one of "low", "medium", "high"; optional), estimatedMinutes (number, optional), done (boolean, optional). 
+If there are no todos, return { "todos": null }. Output must be valid JSON only, nothing else. 
+Here is the input:\n\n${text}`;
 
         const response = await generateObject({
           model,

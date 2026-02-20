@@ -340,14 +340,17 @@ export default function Chat() {
         // prune any items that match persisted deleted ids or fingerprints
         return normalized.filter((p) => {
           if (p.id && deleted.ids[p.id]) return false;
-          const fp = `${(p.title ?? "").toString().trim().toLowerCase()}|${(function (
+          const fp = `${(p.title ?? "").toString().trim().toLowerCase()}|${((
             d?: string
-          ) {
+          ) => {
             if (!d) return "";
             try {
               const dt = new Date(d);
-              if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-            } catch (e) {}
+              if (!Number.isNaN(dt.getTime()))
+                return dt.toISOString().slice(0, 10);
+            } catch (e) {
+              console.error(e);
+            }
             return String(d).trim();
           })(
             p.due
@@ -434,8 +437,10 @@ export default function Chat() {
     if (!d) return "";
     try {
       const dt = new Date(d);
-      if (!isNaN(dt.getTime())) return dt.toISOString().slice(10, 19);
-    } catch (e) {}
+      if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(10, 19);
+    } catch (e) {
+      console.error(e);
+    }
     return String(d).trim();
   };
   const fingerprintTop = (t: Todo) =>
@@ -479,7 +484,7 @@ export default function Chat() {
       if (!d) return "";
       try {
         const dt = new Date(d);
-        if (!isNaN(dt.getTime())) return dt.toISOString().slice(10, 19); // YYYY-MM-DD
+        if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(10, 19); // YYYY-MM-DD
       } catch (e) {
         // ignore
       }
@@ -829,14 +834,14 @@ export default function Chat() {
                               );
                             }
                           }
-                        } catch (e) {
+                        } catch (_e) {
                           /* ignore parse error */
                         }
                       } else {
                         // server rejected; keep optimistic entry
                         try {
                           window.dispatchEvent(new Event("histories:updated"));
-                        } catch (e) {
+                        } catch (_e) {
                           /* ignore */
                         }
                       }
@@ -844,7 +849,7 @@ export default function Chat() {
                       console.warn("failed to save session to server", e);
                       try {
                         window.dispatchEvent(new Event("histories:updated"));
-                      } catch (e) {
+                      } catch (_e) {
                         /* ignore */
                       }
                     }
@@ -858,10 +863,10 @@ export default function Chat() {
                   }
                   try {
                     setTodos([]);
-                  } catch (e) {}
+                  } catch (_e) {}
                   try {
                     setAgentInput("");
-                  } catch (e) {}
+                  } catch (_e) {}
                 }}
               >
                 +
@@ -1031,7 +1036,7 @@ export default function Chat() {
                       ta.style.height = "auto";
                       ta.style.height = `${ta.scrollHeight}px`;
                       setTextareaHeight(`${ta.scrollHeight}px`);
-                    } catch (err) {
+                    } catch (_err) {
                       // ignore
                     }
                   }}
@@ -1097,7 +1102,7 @@ export default function Chat() {
                     );
                     try {
                       localToggleTimes.current.set(id, Date.now());
-                    } catch (e) {}
+                    } catch (_e) {}
                     (async () => {
                       try {
                         const md = todosToMarkdownTable(newState);
@@ -1110,7 +1115,7 @@ export default function Chat() {
                             }
                           ]
                         });
-                      } catch (e) {}
+                      } catch (_e) {}
                     })();
                     return newState;
                   });
@@ -1137,18 +1142,18 @@ export default function Chat() {
                             localDeletedIds.current.delete(id);
                             localDeleteTimes.current.delete(id);
                             persistDeletedToStorage();
-                          } catch (e) {}
+                          } catch (_e) {}
                         },
                         5 * 60 * 1000
                       );
                       if (deleted) {
-                        const fp = `${titleKey(deleted.title)}|${(function (
+                        const fp = `${titleKey(deleted.title)}|${((
                           d?: string
-                        ) {
+                        ) => {
                           if (!d) return "";
                           try {
                             const dt = new Date(d);
-                            if (!isNaN(dt.getTime()))
+                            if (!Number.isNaN(dt.getTime()))
                               return dt.toISOString().slice(0, 10);
                           } catch (e) {}
                           return String(d).trim();

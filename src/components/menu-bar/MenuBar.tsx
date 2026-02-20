@@ -67,7 +67,6 @@ export const MenuBar = ({
     >
       {options.map((option, index) => (
         <MenuOption
-          // biome-ignore lint/suspicious/noArrayIndexKey: TODO
           key={index}
           {...option}
           isActive={isActive}

@@ -56,7 +56,6 @@ export const Select = ({
     >
       {placeholder && <option value={undefined}>{placeholder}</option>}
       {options.map((option, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: TODO
         <option value={option.value} key={index}>
           {option.value}
         </option>
