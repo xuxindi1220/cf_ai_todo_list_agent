@@ -29,7 +29,6 @@ export async function processToolCalls<Tools extends ToolSet>({
   messages: UIMessage[];
   executions: Record<
     string,
-    // biome-ignore lint/suspicious/noExplicitAny: needs a better type
     (args: any, context: ToolCallOptions) => Promise<unknown>
   >;
 }): Promise<UIMessage[]> {

@@ -9,7 +9,7 @@ type Props = {
   onDelete: (id: string) => void;
 };
 
-export function TodoTable({ todos, onToggleDone, onAdd, onUpdate, onDelete }: Props) {
+export function TodoTable({ todos, onToggleDone, onDelete }: Props) {
   return (
     <div className="bg-neutral-100 dark:bg-neutral-900 p-3 rounded-md border border-neutral-200 dark:border-neutral-800">
       <div className="space-y-2">
@@ -26,7 +26,10 @@ export function TodoTable({ todos, onToggleDone, onAdd, onUpdate, onDelete }: Pr
           </thead>
           <tbody>
             {todos.map((t) => (
-              <tr key={t.id} className="border-t border-neutral-200 dark:border-neutral-800">
+              <tr
+                key={t.id}
+                className="border-t border-neutral-200 dark:border-neutral-800"
+              >
                 <td>
                   {/* Use a styled button as the visual checkbox to avoid native checkbox rendering issues across browsers */}
                   <button
@@ -34,7 +37,10 @@ export function TodoTable({ todos, onToggleDone, onAdd, onUpdate, onDelete }: Pr
                     aria-pressed={Boolean(t.done)}
                     aria-label={`${t.title} ${t.done ? "done" : "not done"}`}
                     onClick={() => {
-                      console.debug("TodoTable: toggle click", { id: t.id, todoDone: t.done });
+                      console.debug("TodoTable: toggle click", {
+                        id: t.id,
+                        todoDone: t.done
+                      });
                       onToggleDone(t.id);
                     }}
                     className={
@@ -45,8 +51,22 @@ export function TodoTable({ todos, onToggleDone, onAdd, onUpdate, onDelete }: Pr
                     }
                   >
                     {t.done && (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                        <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        aria-hidden
+                      >
+                        <title>title</title>
+                        <path
+                          d="M20 6L9 17l-5-5"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
                       </svg>
                     )}
                   </button>
@@ -57,7 +77,13 @@ export function TodoTable({ todos, onToggleDone, onAdd, onUpdate, onDelete }: Pr
                 <td>{t.estimatedMinutes ?? "-"}</td>
                 <td>
                   <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => onDelete(t.id)}>Del</Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onDelete(t.id)}
+                    >
+                      Del
+                    </Button>
                     {/* Removed the duplicate Toggle button; checkbox is the canonical control */}
                   </div>
                 </td>
