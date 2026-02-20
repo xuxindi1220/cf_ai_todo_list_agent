@@ -122,8 +122,8 @@ export default {
     // New endpoint: POST /parse-todos
     if (url.pathname === "/parse-todos" && request.method === "POST") {
       try {
-        const body = await request.json().catch(() => ({}));
-        const text = (body?.text as string) || "";
+        const body = (await request.json().catch(() => ({}))) as any;
+        const text = typeof body?.text === 'string' ? body.text : String(body?.text ?? '');
 
         if (!text.trim()) {
           return new Response(JSON.stringify({ todos: null }), {
@@ -179,7 +179,8 @@ export default {
 
         // Forward the request to the Durable Object
         const forwardUrl = new URL(request.url);
-        // adjust pathname to be handled by DO (pass through)
+        // Remove the `/api` prefix so the Durable Object sees paths like /histories
+        forwardUrl.pathname = forwardUrl.pathname.replace(/^\/api/, "");
         const doRequest = new Request(forwardUrl.toString(), {
           method: request.method,
           headers: request.headers,

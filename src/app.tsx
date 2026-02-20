@@ -16,6 +16,7 @@ import { MemoizedMarkdown } from "@/components/memoized-markdown";
 import { ToolInvocationCard } from "@/components/tool-invocation-card/ToolInvocationCard";
 import TodoTable from "@/components/todo/TodoTable";
 import HistoryPanel from "@/components/history/HistoryPanel";
+import type { StoredSession } from "@/components/history/HistoryPanel";
 import { parseTodosFromJSON, parseTodosFromMarkdownTable, todosToMarkdownTable } from "./lib/todoUtils";
 import type { Todo } from "./shared";
 
@@ -35,8 +36,48 @@ const toolsRequiringConfirmation: (keyof typeof tools)[] = [
   "getWeatherInformation"
 ];
 
+// HasOpenAIKey: show a top banner if OPENAI_API_KEY is not configured (keeps parity with starter behavior)
+function HasOpenAIKey() {
+  const [hasOpenAiKey, setHasOpenAiKey] = useState<{ success: boolean } | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch("/check-open-ai-key").then((res) => res.json()).then((d) => { if (mounted) setHasOpenAiKey(d as { success: boolean }); }).catch(() => { if (mounted) setHasOpenAiKey({ success: false }); });
+    return () => { mounted = false; };
+  }, []);
+
+  if (hasOpenAiKey === null) return null;
+
+  if (!hasOpenAiKey?.success) {
+    return (
+      <div className="fixed top-0 left-0 right-0 z-50 bg-red-500/10 backdrop-blur-sm">
+        <div className="max-w-3xl mx-auto p-4">
+          <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-lg border border-red-200 dark:border-red-900 p-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-full">
+                <svg className="w-5 h-5 text-red-600 dark:text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-labelledby="warningIcon">
+                  <title id="warningIcon">Warning Icon</title>
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">OpenAI API Key Not Configured</h3>
+                <p className="text-neutral-600 dark:text-neutral-300 mb-1">Requests to the API, including from the frontend UI, will not work until an OpenAI API key is configured.</p>
+                <p className="text-neutral-600 dark:text-neutral-300">Please configure an OpenAI API key by setting a <a href="https://developers.cloudflare.com/workers/configuration/secrets/" target="_blank" rel="noopener noreferrer" className="text-red-600 dark:text-red-400">secret</a> named <code className="bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded text-red-600 dark:text-red-400 font-mono text-sm">OPENAI_API_KEY</code>.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function Chat() {
-  const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
+  const [historyRefreshSignal] = useState(0);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     // Check localStorage first, default to dark if not found
     const savedTheme = localStorage.getItem("theme");
@@ -79,6 +120,7 @@ export default function Chat() {
   });
 
   const [agentInput, setAgentInput] = useState("");
+  const [displayedSession, setDisplayedSession] = useState<StoredSession | null>(null);
 
   const handleAgentSubmit = async (
     e: React.FormEvent | null,
@@ -89,6 +131,11 @@ export default function Chat() {
     if (e) e.preventDefault();
     const message = typeof messageArg === 'string' ? messageArg : agentInput;
     if (!message || !message.trim()) return;
+
+    // If viewing a displayed (static) session, sending a new message should resume live chat
+    if (displayedSession) {
+      setDisplayedSession(null);
+    }
 
     // Clear the input state (UI)
     setAgentInput("");
@@ -480,6 +527,9 @@ export default function Chat() {
     })();
   }, [agentMessages]);
 
+  // Prepare messages to render: either the displayed (historical) session or live agent messages
+  const messagesToRender = displayedSession ? (displayedSession.messages as any[]) : agentMessages;
+
   return (
     <div className="h-screen w-full p-4 bg-fixed overflow-hidden">
       <HasOpenAIKey />
@@ -489,15 +539,25 @@ export default function Chat() {
           <div className="sticky top-4 p-2">
             <HistoryPanel
               key={historyRefreshSignal}
+              refreshSignal={historyRefreshSignal}
               todos={todos}
               messages={agentMessages}
               onLoad={(session) => {
                 try {
                   setTodos(session.todos ?? []);
-                  console.debug('Loaded session', session);
+                  setDisplayedSession(session);
+                  console.debug('Displayed session', session);
                 } catch (e) {
-                  console.warn('failed to load session', e);
+                  console.warn('failed to display session', e);
                 }
+              }}
+              onDelete={(id) => {
+                try {
+                  if (displayedSession?.id === id) {
+                    setDisplayedSession(null);
+                    setTodos([]);
+                  }
+                } catch (e) { console.warn('onDelete handler failed', e); }
               }}
             />
           </div>
@@ -512,133 +572,194 @@ export default function Chat() {
 
             <div className="flex items-center gap-2">
               <Button aria-label="Save session" onClick={async () => {
+                // Build safe payload to avoid serializing complex objects
+                const safeMessages = (agentMessages ?? []).map((m: any) => ({
+                  id: m.id,
+                  role: m.role,
+                  parts: Array.isArray(m.parts) ? m.parts.map((p: any) => ({ type: p.type, text: typeof p.text === 'string' ? p.text : undefined, toolCallId: p.toolCallId, state: p.state, input: p.input, output: p.output })) : [],
+                  metadata: { createdAt: m.metadata?.createdAt ? new Date(m.metadata.createdAt).toISOString() : undefined }
+                }));
+
+                const safeTodos = (todos ?? []).map((t: any) => ({ ...t }));
+
+                // Create an optimistic local session immediately so the left panel shows it
+                const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+                const optimisticSession = { id: optimisticId, createdAt: new Date().toISOString(), todos: safeTodos, messages: safeMessages, title: `Saved ${new Date().toLocaleString()}` } as any;
                 try {
-                  await fetch('/api/histories', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ todos, messages: agentMessages, title: `Saved ${new Date().toLocaleString()}` })
-                  });
-                  setHistoryRefreshSignal((s) => s + 1);
+                  const raw = localStorage.getItem('local:histories:v1');
+                  const arr = raw ? JSON.parse(raw) as any[] : [];
+                  arr.unshift(optimisticSession);
+                  localStorage.setItem('local:histories:v1', JSON.stringify(arr));
+                  try { window.dispatchEvent(new Event('histories:updated')); } catch (e) { /* ignore */ }
                 } catch (e) {
-                  console.warn('failed to save session', e);
+                  console.warn('failed to write optimistic local history', e);
                 }
+
+                // Try to persist to server; if server returns canonical id, replace optimistic entry
+                (async () => {
+                  try {
+                    const res = await fetch('/api/histories', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ todos: safeTodos, messages: safeMessages, title: optimisticSession.title })
+                    });
+                    if (res.ok) {
+                      try {
+                        const body = await res.json().catch(() => ({})) as any;
+                        const returnedId = body?.id ?? body?.session?.id ?? null;
+                        if (returnedId) {
+                          try {
+                            const raw2 = localStorage.getItem('local:histories:v1');
+                            const arr2 = raw2 ? JSON.parse(raw2) as any[] : [];
+                            const idx = arr2.findIndex((s) => s.id === optimisticId);
+                            const serverSession = { id: returnedId, createdAt: new Date().toISOString(), todos: safeTodos, messages: safeMessages, title: optimisticSession.title } as any;
+                            if (idx !== -1) {
+                              arr2.splice(idx, 1, serverSession);
+                            } else {
+                              arr2.unshift(serverSession);
+                            }
+                            localStorage.setItem('local:histories:v1', JSON.stringify(arr2));
+                            try { window.dispatchEvent(new Event('histories:updated')); } catch (e) { /* ignore */ }
+                          } catch (e) {
+                            console.debug('failed to replace optimistic history with server id', e);
+                          }
+                        }
+                      } catch (e) { /* ignore parse error */ }
+                    } else {
+                      // server rejected; keep optimistic entry
+                      try { window.dispatchEvent(new Event('histories:updated')); } catch (e) { /* ignore */ }
+                    }
+                  } catch (e) {
+                    console.warn('failed to save session to server', e);
+                    try { window.dispatchEvent(new Event('histories:updated')); } catch (e) { /* ignore */ }
+                  }
+                })();
+
+                // Clear the live conversation and local todos to start a new session
+                try {
+                  await clearHistory();
+                } catch (e) {
+                  console.warn('clearHistory failed after save', e);
+                }
+                try { setTodos([]); } catch (e) {}
+                try { setAgentInput(""); } catch (e) {}
               }}>+</Button>
 
-              <BugIcon size={16} />
-              <Toggle
-                toggled={showDebug}
-                aria-label="Toggle debug mode"
-                onClick={() => setShowDebug((prev) => !prev)}
-              />
-            </div>
+             <BugIcon size={16} />
+             <Toggle
+               toggled={showDebug}
+               aria-label="Toggle debug mode"
+               onClick={() => setShowDebug((prev) => !prev)}
+             />
+           </div>
 
-            <div className="flex items-center gap-2 ml-2">
-              <Button variant="ghost" size="md" shape="square" className="rounded-full h-9 w-9" onClick={toggleTheme}>{theme === 'dark' ? <SunIcon size={20} /> : <MoonIcon size={20} />}</Button>
-              <Button variant="ghost" size="md" shape="square" className="rounded-full h-9 w-9" onClick={clearHistory}><TrashIcon size={20} /></Button>
-            </div>
-          </header>
+           <div className="flex items-center gap-2 ml-2">
+             <Button variant="ghost" size="md" shape="square" className="rounded-full h-9 w-9" onClick={toggleTheme}>{theme === 'dark' ? <SunIcon size={20} /> : <MoonIcon size={20} />}</Button>
+             <Button variant="ghost" size="md" shape="square" className="rounded-full h-9 w-9" onClick={clearHistory}><TrashIcon size={20} /></Button>
+           </div>
+         </header>
 
-          <section className="flex-1 overflow-y-auto p-4 space-y-4 pb-40">
-            {agentMessages.length === 0 ? (
-              <div className="h-full flex items-center justify-center">
-                <Card className="p-6 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900">
-                  <div className="text-center space-y-4">
-                    <div className="bg-[#F48120]/10 text-[#F48120] rounded-full p-3 inline-flex">
-                      <RobotIcon size={24} />
-                    </div>
-                    <h3 className="font-semibold text-lg">Welcome to AI Chat</h3>
-                    <p className="text-muted-foreground text-sm">Start a conversation with your AI assistant.</p>
-                  </div>
-                </Card>
-              </div>
-            ) : (
-              agentMessages.map((m, index) => {
-                const isUser = m.role === "user";
-                const showAvatar = index === 0 || agentMessages[index - 1]?.role !== m.role;
-                return (
-                  <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`flex gap-2 max-w-[85%] ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-                      {showAvatar && !isUser ? <Avatar username={"AI"} className="shrink-0" /> : (!isUser && <div className="w-8" />)}
-                      <div>
-                        {m.parts?.map((part, i) => {
-                          if (part.type === 'text') {
-                            return (
-                              <div key={i}>
-                                <Card className={`p-3 rounded-md bg-neutral-100 dark:bg-neutral-900 ${isUser ? 'rounded-br-none' : 'rounded-bl-none border-assistant-border'}`}>
-                                  <MemoizedMarkdown id={`${m.id}-${i}`} content={part.text.replace(/^scheduled message: /, "")} />
-                                </Card>
-                                <p className={`text-xs text-muted-foreground mt-1 ${isUser ? 'text-right' : 'text-left'}`}>{formatTime(m.metadata?.createdAt ? new Date(m.metadata.createdAt) : new Date())}</p>
-                              </div>
-                            );
-                          }
-                          if (isStaticToolUIPart(part) && m.role === 'assistant') {
-                            const toolCallId = part.toolCallId;
-                            const toolName = part.type.replace('tool-', '');
-                            const needsConfirmation = toolsRequiringConfirmation.includes(toolName as keyof typeof tools);
-                            return (
-                              <ToolInvocationCard key={`${toolCallId}-${i}`} toolUIPart={part} toolCallId={toolCallId} needsConfirmation={needsConfirmation} onSubmit={({ toolCallId, result }) => {
-                                addToolResult({ tool: part.type.replace('tool-', ''), toolCallId, output: result });
-                              }} addToolResult={(toolCallId, result) => addToolResult({ tool: part.type.replace('tool-', ''), toolCallId, output: result })} />
-                            );
-                          }
-                          return null;
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-            <div ref={messagesEndRef} />
-          </section>
-
-          <form onSubmit={(e) => { e.preventDefault(); handleAgentSubmit(e, {}); setTextareaHeight('auto'); }} className="chat-input-area p-3 bg-neutral-50 border-t border-neutral-300 dark:border-neutral-800">
-             <div className="flex items-center gap-2">
-               <div className="flex-1 relative">
-                 <Textarea
-                   disabled={pendingToolCallConfirmation}
-                   placeholder={"Send a message..."}
-                   className="w-full px-3 py-2 rounded-2xl main-chat-textarea"
-                   value={agentInput}
-                   onChange={(e) => {
-                     const ta = e.target as HTMLTextAreaElement;
-                     setAgentInput(ta.value);
-                     // auto-resize
-                     try {
-                       ta.style.height = 'auto';
-                       ta.style.height = `${ta.scrollHeight}px`;
-                       setTextareaHeight(`${ta.scrollHeight}px`);
-                     } catch (err) {
-                       // ignore
-                     }
-                   }}
-                   onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-                     // Submit on Enter (without Shift). Respect IME composition.
-                     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                       e.preventDefault();
-                       const current = (e.currentTarget as HTMLTextAreaElement).value;
-                       // Call submit with messageArg taken from the textarea value because
-                       // onKeyDown can fire before React state updates from onChange.
-                       try {
-                         void handleAgentSubmit(null, {}, current);
-                       } catch (err) {
-                         console.warn('submit via Enter failed', err);
-                       }
-                       setTextareaHeight('auto');
-                     }
-                   }}
-                   rows={2}
-                   style={{ height: textareaHeight }}
-                 />
-               </div>
-               <div className="flex items-center gap-2">
-                 <button type="submit" className="inline-flex items-center justify-center bg-primary text-white rounded-full p-2" disabled={pendingToolCallConfirmation || !agentInput.trim()}>
-                   <PaperPlaneTiltIcon size={16} />
-                 </button>
-               </div>
+         <section className="flex-1 overflow-y-auto p-4 space-y-4 pb-40">
+           {messagesToRender.length === 0 ? (
+             <div className="h-full flex items-center justify-center">
+               <Card className="p-6 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900">
+                 <div className="text-center space-y-4">
+                   <div className="bg-[#F48120]/10 text-[#F48120] rounded-full p-3 inline-flex">
+                     <RobotIcon size={24} />
+                   </div>
+                   <h3 className="font-semibold text-lg">Welcome to AI Chat</h3>
+                   <p className="text-muted-foreground text-sm">Start a conversation with your AI assistant.</p>
+                 </div>
+               </Card>
              </div>
-           </form>
-         </main>
+           ) : (
+             messagesToRender.map((m: any, index: number) => {
+               const isUser = m.role === "user";
+               const showAvatar = index === 0 || messagesToRender[index - 1]?.role !== m.role;
+               return (
+                 <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                   <div className={`flex gap-2 max-w-[85%] ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                     {showAvatar && !isUser ? <Avatar username={"AI"} className="shrink-0" /> : (!isUser && <div className="w-8" />)}
+                     <div>
+                       {m.parts?.map((part: any, i: number) => {
+                         if (part.type === 'text') {
+                           return (
+                             <div key={i}>
+                               <Card className={`p-3 rounded-md bg-neutral-100 dark:bg-neutral-900 ${isUser ? 'rounded-br-none' : 'rounded-bl-none border-assistant-border'}`}>
+                                 <MemoizedMarkdown id={`${m.id}-${i}`} content={String(part.text).replace(/^scheduled message: /, "")} />
+                               </Card>
+                               <p className={`text-xs text-muted-foreground mt-1 ${isUser ? 'text-right' : 'text-left'}`}>{formatTime(m.metadata?.createdAt ? new Date(m.metadata.createdAt) : new Date())}</p>
+                             </div>
+                           );
+                         }
+                         if (isStaticToolUIPart(part) && m.role === 'assistant') {
+                           const toolCallId = part.toolCallId;
+                           const toolName = part.type.replace('tool-', '');
+                           const needsConfirmation = toolsRequiringConfirmation.includes(toolName as keyof typeof tools);
+                           return (
+                             <ToolInvocationCard key={`${toolCallId}-${i}`} toolUIPart={part} toolCallId={toolCallId} needsConfirmation={needsConfirmation} onSubmit={({ toolCallId, result }) => {
+                               addToolResult({ tool: part.type.replace('tool-', ''), toolCallId, output: result });
+                             }} addToolResult={(toolCallId, result) => addToolResult({ tool: part.type.replace('tool-', ''), toolCallId, output: result })} />
+                           );
+                         }
+                         return null;
+                       })}
+                     </div>
+                   </div>
+                 </div>
+               );
+             })
+           )}
+           <div ref={messagesEndRef} />
+         </section>
+
+         <form onSubmit={(e) => { e.preventDefault(); handleAgentSubmit(e, {}); setTextareaHeight('auto'); }} className="chat-input-area p-3 bg-neutral-50 border-t border-neutral-300 dark:border-neutral-800">
+            <div className="flex items-center gap-2">
+              <div className="flex-1 relative">
+                <Textarea
+                  disabled={pendingToolCallConfirmation}
+                  placeholder={"Send a message..."}
+                  className="w-full px-3 py-2 rounded-2xl main-chat-textarea"
+                  value={agentInput}
+                  onChange={(e) => {
+                    const ta = e.target as HTMLTextAreaElement;
+                    setAgentInput(ta.value);
+                    // auto-resize
+                    try {
+                      ta.style.height = 'auto';
+                      ta.style.height = `${ta.scrollHeight}px`;
+                      setTextareaHeight(`${ta.scrollHeight}px`);
+                    } catch (err) {
+                      // ignore
+                    }
+                  }}
+                  onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                    // Submit on Enter (without Shift). Respect IME composition.
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      const current = (e.currentTarget as HTMLTextAreaElement).value;
+                      // Call submit with messageArg taken from the textarea value because
+                      // onKeyDown can fire before React state updates from onChange.
+                      try {
+                        void handleAgentSubmit(null, {}, current);
+                      } catch (err) {
+                        console.warn('submit via Enter failed', err);
+                      }
+                      setTextareaHeight('auto');
+                    }
+                  }}
+                  rows={2}
+                  style={{ height: textareaHeight }}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="submit" className="inline-flex items-center justify-center bg-primary text-white rounded-full p-2" disabled={pendingToolCallConfirmation || !agentInput.trim()}>
+                  <PaperPlaneTiltIcon size={16} />
+                </button>
+              </div>
+            </div>
+          </form>
+        </main>
 
         {/* Right: Todo table */}
         <aside className="col-span-3 overflow-auto">
@@ -653,43 +774,4 @@ export default function Chat() {
       </div>
     </div>
   );
-}
-
-function HasOpenAIKey() {
-  const [hasOpenAiKey, setHasOpenAiKey] = useState<{ success: boolean } | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-    fetch("/check-open-ai-key").then((res) => res.json()).then((d) => { if (mounted) setHasOpenAiKey(d as { success: boolean }); }).catch(() => { if (mounted) setHasOpenAiKey({ success: false }); });
-    return () => { mounted = false; };
-  }, []);
-
-  if (hasOpenAiKey === null) return null;
-
-  if (!hasOpenAiKey?.success) {
-    return (
-      <div className="fixed top-0 left-0 right-0 z-50 bg-red-500/10 backdrop-blur-sm">
-        <div className="max-w-3xl mx-auto p-4">
-          <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-lg border border-red-200 dark:border-red-900 p-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-full">
-                <svg className="w-5 h-5 text-red-600 dark:text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-labelledby="warningIcon">
-                  <title id="warningIcon">Warning Icon</title>
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">OpenAI API Key Not Configured</h3>
-                <p className="text-neutral-600 dark:text-neutral-300 mb-1">Requests to the API, including from the frontend UI, will not work until an OpenAI API key is configured.</p>
-                <p className="text-neutral-600 dark:text-neutral-300">Please configure an OpenAI API key by setting a <a href="https://developers.cloudflare.com/workers/configuration/secrets/" target="_blank" rel="noopener noreferrer" className="text-red-600 dark:text-red-400">secret</a> named <code className="bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded text-red-600 dark:text-red-400 font-mono text-sm">OPENAI_API_KEY</code>.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  return null;
 }
