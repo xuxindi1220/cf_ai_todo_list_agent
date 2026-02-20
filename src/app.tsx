@@ -94,6 +94,27 @@ export default function Chat() {
     const message = agentInput;
     setAgentInput("");
 
+    // Try to parse todos locally first. If the user pasted a JSON array or a markdown table,
+    // populate the local todos immediately so the TodoTable shows the items without waiting
+    // for the assistant to respond.
+    const fromJson = parseTodosFromJSON(message);
+    const fromMd = !fromJson ? parseTodosFromMarkdownTable(message) : null;
+    if (fromJson || fromMd) {
+      const parsed = fromJson ?? fromMd!;
+      setTodos(parsed);
+
+      // Send a compact markdown representation to the agent so the conversation stays in sync
+      const md = todosToMarkdownTable(parsed);
+      await sendMessage(
+        {
+          role: "user",
+          parts: [{ type: "text", text: `Added todos:\n\n${md}` }]
+        },
+        { body: extraData }
+      );
+      return;
+    }
+
     // Send message to agent
     await sendMessage(
       {

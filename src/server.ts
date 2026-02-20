@@ -36,6 +36,10 @@ export class Chat extends AIChatAgent<Env> {
     onFinish: StreamTextOnFinishCallback<ToolSet>,
     options?: { abortSignal?: AbortSignal }
   ) {
+    // Ensure the MCP client's jsonSchema helper is loaded before we read tools
+    // this prevents `jsonSchema not initialized` errors when getAITools() is called
+    await this.mcp.ensureJsonSchema();
+
     // const mcpConnection = await this.mcp.connect(
     //   "https://path-to-mcp-server/sse"
     // );

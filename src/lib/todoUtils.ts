@@ -1,18 +1,62 @@
 import type { Todo } from "../shared";
 
+// Helper: trim and remove markdown code fences and surrounding text, return candidate JSON string(s)
+function extractJsonCandidates(input: string): string[] {
+  const s = input.trim();
+
+  // If the entire input is enclosed in triple-backtick code fence, extract inner
+  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced && fenced[1]) {
+    return [fenced[1].trim()];
+  }
+
+  // Try to find a JSON array or object anywhere in the text
+  const candidates: string[] = [];
+
+  // Find first JSON array [...] occurrence
+  const arrayMatch = s.match(/\[([\s\S]*?)\]/);
+  if (arrayMatch) {
+    // Rebuild with outer brackets to ensure valid JSON
+    candidates.push("[" + arrayMatch[1] + "]");
+  }
+
+  // Find first JSON object {...} occurrence
+  const objMatch = s.match(/\{([\s\S]*?)\}/);
+  if (objMatch) {
+    candidates.push("{" + objMatch[1] + "}");
+  }
+
+  // As a fallback, return the whole trimmed string
+  candidates.push(s);
+
+  return candidates;
+}
+
 // Parse JSON string into Todo[] if possible
 export function parseTodosFromJSON(input: string): Todo[] | null {
-  try {
-    const obj = JSON.parse(input);
-    if (Array.isArray(obj)) {
-      return obj.map(normalizeTodo);
+  if (!input || typeof input !== "string") return null;
+
+  const candidates = extractJsonCandidates(input);
+
+  for (const candidate of candidates) {
+    try {
+      const obj = JSON.parse(candidate);
+      if (Array.isArray(obj)) {
+        return obj.map(normalizeTodo);
+      }
+      if (obj && Array.isArray(obj.todos)) {
+        return obj.todos.map(normalizeTodo);
+      }
+      // Support object with tasks key
+      if (obj && Array.isArray(obj.tasks)) {
+        return obj.tasks.map(normalizeTodo);
+      }
+    } catch (e) {
+      // try next candidate
+      continue;
     }
-    if (obj && Array.isArray(obj.todos)) {
-      return obj.todos.map(normalizeTodo);
-    }
-  } catch (e) {
-    return null;
   }
+
   return null;
 }
 
