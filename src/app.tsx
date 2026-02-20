@@ -81,13 +81,16 @@ export default function Chat() {
   const [agentInput, setAgentInput] = useState("");
 
   const handleAgentSubmit = async (
-    e: React.FormEvent,
-    extraData: Record<string, unknown> = {}
+    e: React.FormEvent | null,
+    extraData: Record<string, unknown> = {},
+    messageArg?: string
   ) => {
-    e.preventDefault();
-    if (!agentInput.trim()) return;
+    // If an event was provided (form submit), prevent default.
+    if (e) e.preventDefault();
+    const message = typeof messageArg === 'string' ? messageArg : agentInput;
+    if (!message || !message.trim()) return;
 
-    const message = agentInput;
+    // Clear the input state (UI)
     setAgentInput("");
 
     // Try to parse todos locally first. If the user pasted a JSON array or a markdown table,
@@ -592,16 +595,46 @@ export default function Chat() {
           <form onSubmit={(e) => { e.preventDefault(); handleAgentSubmit(e, {}); setTextareaHeight('auto'); }} className="chat-input-area p-3 bg-neutral-50 border-t border-neutral-300 dark:border-neutral-800">
              <div className="flex items-center gap-2">
                <div className="flex-1 relative">
--                <Textarea disabled={pendingToolCallConfirmation} placeholder={"Send a message..."} className="w-full px-3 py-2 rounded-2xl" value={agentInput} onChange={(e) => { setAgentInput(e.target.value); }} rows={2} style={{ height: textareaHeight }} />
-+                <Textarea disabled={pendingToolCallConfirmation} placeholder={"Send a message..."} className="w-full px-3 py-2 rounded-2xl main-chat-textarea" value={agentInput} onChange={(e) => { setAgentInput(e.target.value); }} rows={2} style={{ height: textareaHeight }} />
+                 <Textarea
+                   disabled={pendingToolCallConfirmation}
+                   placeholder={"Send a message..."}
+                   className="w-full px-3 py-2 rounded-2xl main-chat-textarea"
+                   value={agentInput}
+                   onChange={(e) => {
+                     const ta = e.target as HTMLTextAreaElement;
+                     setAgentInput(ta.value);
+                     // auto-resize
+                     try {
+                       ta.style.height = 'auto';
+                       ta.style.height = `${ta.scrollHeight}px`;
+                       setTextareaHeight(`${ta.scrollHeight}px`);
+                     } catch (err) {
+                       // ignore
+                     }
+                   }}
+                   onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                     // Submit on Enter (without Shift). Respect IME composition.
+                     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                       e.preventDefault();
+                       const current = (e.currentTarget as HTMLTextAreaElement).value;
+                       // Call submit with messageArg taken from the textarea value because
+                       // onKeyDown can fire before React state updates from onChange.
+                       try {
+                         void handleAgentSubmit(null, {}, current);
+                       } catch (err) {
+                         console.warn('submit via Enter failed', err);
+                       }
+                       setTextareaHeight('auto');
+                     }
+                   }}
+                   rows={2}
+                   style={{ height: textareaHeight }}
+                 />
                </div>
                <div className="flex items-center gap-2">
--                <button type="submit" className="inline-flex items-center justify-center bg-primary text-white rounded-full p-2">
--                  <PaperPlaneTiltIcon size={16} />
--                </button>
-+                <button type="submit" className="inline-flex items-center justify-center bg-primary text-white rounded-full p-2" disabled={pendingToolCallConfirmation || !agentInput.trim()}>
-+                  <PaperPlaneTiltIcon size={16} />
-+                </button>
+                 <button type="submit" className="inline-flex items-center justify-center bg-primary text-white rounded-full p-2" disabled={pendingToolCallConfirmation || !agentInput.trim()}>
+                   <PaperPlaneTiltIcon size={16} />
+                 </button>
                </div>
              </div>
            </form>
